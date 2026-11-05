@@ -1,0 +1,61 @@
+name: Deploy to AKS
+
+on:
+  push:
+    branches: [main]
+    paths: ["k8s/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency: aks-demo
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Protected environment: add required reviewers in Settings > Environments > aks-demo.
+    environment: aks-demo
+    env:
+      AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+      AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply manifests
+        run: ./scripts/aks-invoke.sh "kubectl apply -f ." k8s
+
+      # rollout status also waits until the old pods are gone, so only the new pods are checked below.
+      - name: Wait for the rollout
+        run: ./scripts/aks-invoke.sh "kubectl rollout status deployment/web -n demo --timeout=120s"
+
+      - name: Check for restarts and OOMKilled
+        run: |
+          sleep 60
+          pods=$(./scripts/aks-invoke.sh "kubectl get pods -n demo -l app=web -o jsonpath='{range .items[*]}{.metadata.name}{\" restarts=\"}{.status.containerStatuses[0].restartCount}{\" last=\"}{.status.containerStatuses[0].lastState.terminated.reason}{\"\\n\"}{end}'")
+          echo "$pods"
+          if echo "$pods" | grep -q "last=OOMKilled"; then
+            echo "A pod was OOMKilled."
+            exit 1
+          fi
+          if echo "$pods" | grep -qv "restarts=0"; then
+            echo "A pod restarted after the rollout."
+            exit 1
+          fi
+
+      - name: Close SRE Agent issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for n in $(gh issue list --label sre-agent-incident --state open --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "Deployment ${GITHUB_SHA} validated: rollout complete and no OOMKilled or restarting pods."
+          done

@@ -1,0 +1,59 @@
+name: SRE Agent handoff
+
+# A person runs this after reading the Azure SRE Agent findings. The agent is read-only
+# and never writes to GitHub, so this workflow is the human gate between the two.
+on:
+  workflow_dispatch:
+    inputs:
+      incident_id:
+        description: Incident ID or title from the SRE Agent
+        required: true
+      root_cause:
+        description: Root cause, as reported by the agent
+        required: true
+      evidence:
+        description: Key evidence cited by the agent
+        required: true
+      proposed_fix:
+        description: The exact fix the agent proposed
+        required: true
+
+permissions:
+  issues: write
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      INCIDENT_ID: ${{ inputs.incident_id }}
+      ROOT_CAUSE: ${{ inputs.root_cause }}
+      EVIDENCE: ${{ inputs.evidence }}
+      PROPOSED_FIX: ${{ inputs.proposed_fix }}
+    steps:
+      - name: Open the issue
+        run: |
+          gh label create sre-agent-incident --color D93F0B \
+            --description "Opened from an Azure SRE Agent investigation" 2>/dev/null || true
+          {
+            echo "## Incident"
+            echo "$INCIDENT_ID"
+            echo
+            echo "## Root cause"
+            echo "$ROOT_CAUSE"
+            echo
+            echo "## Evidence"
+            echo "$EVIDENCE"
+            echo
+            echo "## Proposed fix"
+            echo "$PROPOSED_FIX"
+            echo
+            echo "## Human gates"
+            echo "- [ ] A person raises the pull request for the proposed fix"
+            echo "- [ ] A reviewer approves and merges it"
+            echo "- [ ] A person approves the \`aks-demo\` deployment"
+            echo
+            echo "This issue closes automatically after the deployment is validated."
+          } > body.md
+          gh issue create --title "[SRE Agent] ${INCIDENT_ID}" --label sre-agent-incident --body-file body.md

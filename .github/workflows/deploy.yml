@@ -31,7 +31,9 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Apply manifests
-        run: ./scripts/aks-invoke.sh "kubectl apply -f ." k8s
+        # --file accepts a file or ".", not a folder name, so run from inside k8s.
+        working-directory: k8s
+        run: ../scripts/aks-invoke.sh "kubectl apply -f ." .
 
       # rollout status also waits until the old pods are gone, so only the new pods are checked below.
       - name: Wait for the rollout
